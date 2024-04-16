@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import UserRegistrationAPIView, UserLoginAPIView, ForgotPasswordAPIView, send_otp, LogoutAPIView, check_username, check_phone_number, verify_otp
+from .views import UserRegistrationAPIView, UserLoginAPIView, ForgotPasswordAPIView, send_otp, LogoutAPIView, check_username, check_phone_number, verify_otp, check_passcode
 from rest_framework_simplejwt.views import TokenRefreshView
 
 urlpatterns = [
@@ -12,5 +12,5 @@ urlpatterns = [
     path('logout/', LogoutAPIView.as_view(), name='logout'),
     path('check_username/<str:username>/', check_username, name='check_username'),
     path('check_phone_number/<str:phone>/', check_phone_number, name='check_phone_number'),
-    # secret code check
+    path('check_passcode/<str:phone>/<str:code>/', check_passcode, name='check_passcode'),
 ]

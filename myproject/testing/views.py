@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 from django.views.decorators.csrf import csrf_exempt
 import json
 from django.db import connection
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view, permission_classes
 
 load_dotenv()
 
@@ -40,6 +42,7 @@ class UserLoginAPIView(APIView):
 User = get_user_model()
 
 class ForgotPasswordAPIView(APIView):
+    permission_classes = [IsAuthenticated]
     def post(self, request):
         phone_number = request.data.get('phone_number')
         new_password = request.data.get('new_password')
@@ -65,7 +68,8 @@ class ForgotPasswordAPIView(APIView):
 import random
 
 
-@csrf_exempt
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def send_otp(request):
     if request.method == 'POST':
         # Parse JSON data from request body
@@ -88,6 +92,10 @@ def send_otp(request):
             return JsonResponse({'error': 'Twilio account credentials are not configured correctly'}, status=500)
 
         client = Client(account_sid, account_auth_token)
+
+        # phone_number = "+91"+phone_number
+
+        print(f"phone number {phone_number} and type {type(phone_number)}")
 
         try:
             otp = random.randint(1000, 9999)
@@ -131,8 +139,10 @@ class LogoutAPIView(APIView):
             return Response({'message': 'Logout successful'}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({'error': f'Failed to logout: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        
-@csrf_exempt
+
+      
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def check_username(request, username, format=None):
     if request.method == 'GET':
         try:
@@ -150,7 +160,8 @@ def check_username(request, username, format=None):
             return JsonResponse({'error': error_message}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             
 
-@csrf_exempt
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def check_phone_number(request, phone, format=None):
     if request.method == 'GET':
         if len(phone) != 10 or len(phone) < 10:
@@ -167,29 +178,56 @@ def check_phone_number(request, phone, format=None):
             return JsonResponse(data, status=status.HTTP_200_OK)
         
         except Exception as e:
-            # Handle any exceptions here
             error_message = str(e)
             return JsonResponse({'error': error_message}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
  
-@csrf_exempt
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def verify_otp(request, phone, otp, format=None):
     if request.method == 'GET':
-        # if len(phone) != 10 or len(phone) < 10:
-        #     return JsonResponse({'message': 'phone number must be 10 digits'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(phone) != 10 or len(phone) < 10:
+            return JsonResponse({'message': 'phone number must be 10 digits'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
+            phone_number = "+91"+phone
             with connection.cursor() as cursor:
-                cursor.execute("SELECT otp FROM otp_table WHERE phone_number = '+919073877551'")
+                cursor.execute("SELECT otp FROM otp_table WHERE phone_number = %s ", [phone_number])
                 username_exists = cursor.fetchone()[0]
                 print(username_exists)
 
             if username_exists == otp:
-                data = {'data': True}
-                return JsonResponse(data, status=status.HTTP_200_OK)
+                return JsonResponse({'data': True}, status=status.HTTP_200_OK)
             else:
-                return JsonResponse(data, status=status.HTTP_404_NOT_FOUND)
+                return JsonResponse({'data': False}, status=status.HTTP_404_NOT_FOUND)
         
         except Exception as e:
-            # Handle any exceptions here
             error_message = str(e)
             return JsonResponse({'error': error_message}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def check_passcode(request, phone, code,  format=None):
+    if request.method == 'GET':
+        print(phone)
+        print(len(code))
+
+        if len(code) != 4:
+            return JsonResponse({'message': 'secret code must be 4 digits'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            phone_number = "+91"+phone
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT secret_code FROM secret_code_table WHERE phone_number = %s", [phone_number])
+                otp_exists = cursor.fetchone()[0]
+                print(otp_exists)
+
+            if otp_exists == code:
+                return JsonResponse({'data': True}, status=status.HTTP_200_OK)
+            else:
+                return JsonResponse({'data': False}, status=status.HTTP_404_NOT_FOUND)
+        
+        except Exception as e:
+            error_message = str(e)
+            return JsonResponse({'error': error_message}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
