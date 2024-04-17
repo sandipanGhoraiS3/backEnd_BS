@@ -15,7 +15,7 @@ from django.db import connection
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import api_view, permission_classes
 
-load_dotenv()
+# load_dotenv()
 
 
 class UserRegistrationAPIView(APIView):
@@ -42,7 +42,7 @@ class UserLoginAPIView(APIView):
 User = get_user_model()
 
 class ForgotPasswordAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     def post(self, request):
         phone_number = request.data.get('phone_number')
         new_password = request.data.get('new_password')
@@ -69,43 +69,41 @@ import random
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def send_otp(request):
+# @permission_classes([IsAuthenticated])
+def send_otp_forgot(request):
     if request.method == 'POST':
-        # Parse JSON data from request body
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
             return JsonResponse({'error': 'Invalid JSON payload'}, status=400)
 
-        # Ensure that the phone_number is present in the JSON payload
         phone_number = data.get('phone_number')
-        print(phone_number)
+
         if not phone_number:
             return JsonResponse({'error': 'Phone number is required in the request'}, status=400)
         
-        account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-        account_auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-        # verify_sid = os.getenv('VERIFY_SID')
+        # account_sid = os.getenv('TWILIO_ACCOUNT_SID')
+        # account_auth_token = os.getenv('TWILIO_AUTH_TOKEN')
 
-        if not account_sid or not account_auth_token:
-            return JsonResponse({'error': 'Twilio account credentials are not configured correctly'}, status=500)
+        # print(f"account_sid: {account_sid}")
+        # print(f"account_auth_token: {account_auth_token}")
 
-        client = Client(account_sid, account_auth_token)
+        # if not account_sid or not account_auth_token:
+        #     return JsonResponse({'error': 'Twilio account credentials are not configured correctly'}, status=500)
 
-        # phone_number = "+91"+phone_number
+        # client = Client(account_sid, account_auth_token)
 
         print(f"phone number {phone_number} and type {type(phone_number)}")
 
         try:
+            phone_number_code = "+91"+phone_number
             otp = random.randint(1000, 9999)
-            message = client.messages.create(
-                body=f"This is a testing message from Sandipan. Your OTP is - {otp}",
-                from_="+13344234986", 
-                to=phone_number
-            )
-            # otp_verification = client.verify.services(verify_sid).verifications.create(
-            #     to=phone_number, channel="sms"
+            print(f"OTP:- {otp}")
+
+            # message = client.messages.create(
+            #     body=f"This is a testing message from Sandipan. Your OTP is - {otp}",
+            #     from_="+13344234986", 
+            #     to=phone_number_code
             # )
 
             with connection.cursor() as cursor:
@@ -114,17 +112,70 @@ def send_otp(request):
 
             if otp_data:
                 with connection.cursor() as cursor:
-                    cursor.execute("UPDATE otp_model SET otp = %s WHERE phone_number = %s", [otp, phone_number])
+                    cursor.execute("UPDATE otp_table SET otp = %s WHERE phone_number = %s", [otp, phone_number])
             else:
                 with connection.cursor() as cursor:
                     cursor.execute("INSERT INTO otp_table (phone_number, otp) VALUES (%s, %s)", [phone_number, otp])
 
-            print(message)
+            # print(message)
             return JsonResponse({'message': 'Your SMS has been sent'}, status=200)
         except Exception as e:
             return JsonResponse({'error': f'Failed to send SMS: {str(e)}'}, status=500)
     else:
         return JsonResponse({'error': 'Only POST requests are allowed'}, status=405)
+    
+
+@api_view(['POST'])
+# @permission_classes([IsAuthenticated])
+def send_otp_login(request):
+    if request.method == 'POST':
+        try:
+            data = json.loads(request.body)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON payload'}, status=400)
+
+        phone_number = data.get('phone_number')
+
+        if not phone_number:
+            return JsonResponse({'error': 'Phone number is required in the request'}, status=400)
+        
+        # account_sid = os.getenv('TWILIO_ACCOUNT_SID')
+        # account_auth_token = os.getenv('TWILIO_AUTH_TOKEN')
+        
+
+        # print(f"account_sid: {account_sid}")
+        # print(f"account_auth_token: {account_auth_token}")
+
+        # if not account_sid or not account_auth_token:
+        #     return JsonResponse({'error': 'Twilio account credentials are not configured correctly'}, status=500)
+
+        # client = Client(account_sid, account_auth_token)
+
+        print(f"phone number {phone_number} and type {type(phone_number)}")
+
+        try:
+            phone_number_code = "+91"+phone_number
+            otp = random.randint(1000, 9999)
+            print(f"OTP:- {otp}")
+
+            # message = client.messages.create(
+            #     body=f"This is a testing message from Sandipan. Your OTP is - {otp}",
+            #     from_="+13344234986", 
+            #     to=phone_number_code
+            # )
+
+            with connection.cursor() as cursor:
+                cursor.execute("INSERT INTO temp_otp_table (phone_number, otp) VALUES (%s, %s)", [phone_number, otp])
+
+            # print(message)
+            return JsonResponse({'message': 'Your SMS has been sent'}, status=200)
+        except Exception as e:
+            return JsonResponse({'error': f'Failed to send SMS: {str(e)}'}, status=500)
+    else:
+        return JsonResponse({'error': 'Only POST requests are allowed'}, status=405)
+
+
+
 
 class LogoutAPIView(APIView):
     def post(self, request):
@@ -182,14 +233,15 @@ def check_phone_number(request, phone, format=None):
             return JsonResponse({'error': error_message}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
  
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def verify_otp(request, phone, otp, format=None):
+# @permission_classes([IsAuthenticated])
+def verify_otp_forgot(request, phone, otp, format=None):
     if request.method == 'GET':
         if len(phone) != 10 or len(phone) < 10:
             return JsonResponse({'message': 'phone number must be 10 digits'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            phone_number = "+91"+phone
+            # phone_number = "+91"+phone
+            phone_number = phone
             with connection.cursor() as cursor:
                 cursor.execute("SELECT otp FROM otp_table WHERE phone_number = %s ", [phone_number])
                 username_exists = cursor.fetchone()[0]
@@ -204,21 +256,41 @@ def verify_otp(request, phone, otp, format=None):
             error_message = str(e)
             return JsonResponse({'error': error_message}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+@api_view(['GET'])
+def verify_otp_login(request, phone, otp, format=None):
+    if request.method == 'GET':
+        if len(phone) != 10 or len(phone) < 10:
+            return JsonResponse({'message': 'phone number must be 10 digits'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            # phone_number = "+91"+phone
+            phone_number = phone
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT otp FROM temp_otp_table  WHERE phone_number = %s ", [phone_number])
+                username_exists = cursor.fetchone()[0]
+                print(username_exists)
+
+            if username_exists == otp:
+                return JsonResponse({'data': True}, status=status.HTTP_200_OK)
+            else:
+                return JsonResponse({'data': False}, status=status.HTTP_404_NOT_FOUND)
+        
+        except Exception as e:
+            error_message = str(e)
+            return JsonResponse({'error': error_message}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def check_passcode(request, phone, code,  format=None):
+# @permission_classes([IsAuthenticated])
+def check_passcode(request, code,  format=None):
     if request.method == 'GET':
-        print(phone)
         print(len(code))
 
         if len(code) != 4:
             return JsonResponse({'message': 'secret code must be 4 digits'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            phone_number = "+91"+phone
             with connection.cursor() as cursor:
-                cursor.execute("SELECT secret_code FROM secret_code_table WHERE phone_number = %s", [phone_number])
+                cursor.execute("SELECT secret_code FROM secret_code_table")
                 otp_exists = cursor.fetchone()[0]
                 print(otp_exists)
 
