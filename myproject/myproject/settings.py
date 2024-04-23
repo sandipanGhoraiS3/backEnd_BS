@@ -43,9 +43,12 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'rest_framework_simplejwt.token_blacklist',
-    'testing',
+    'Auth',
     'rest_framework_simplejwt',
-    'corsheaders'
+    'corsheaders',
+    'testingZone',
+    'HomeApi',
+    'Comments',
 ]
 
 MIDDLEWARE = [
@@ -107,7 +110,7 @@ REST_FRAMEWORK = {
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': 'test_user',
+        'NAME': 'database_BS',
         'USER': 'postgres',
         'PASSWORD': 'admin',
         'HOST': '127.0.0.1',
@@ -116,7 +119,7 @@ DATABASES = {
 }
 
 
-AUTH_USER_MODEL = "testing.CustomUser"
+AUTH_USER_MODEL = "Auth.BSUser"
 
 REST_FRAMEWORK = {
 
