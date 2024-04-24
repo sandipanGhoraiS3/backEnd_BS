@@ -4,12 +4,14 @@ import boto3
 from dotenv import load_dotenv
 import os
 from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseServerError, HttpResponseNotAllowed
 from rest_framework.decorators import api_view
 import tempfile
 from django.db import connection
 from rest_framework import status
 import requests
+from django.utils.timesince import timesince
+from datetime import datetime
 
 # Create your views here.
 @csrf_exempt
@@ -79,5 +81,153 @@ def add_media(request, format=None):
             error_message = str(e)
             return JsonResponse({'error': error_message}, status=500)
 
+def format_time_since(timestamp):
+    now = datetime.now()
+    delta = now - timestamp
+    if delta.days > 0:
+        return f"{delta.days} days ago"
+    elif delta.seconds < 60:
+        return f"{delta.seconds} seconds ago"
+    elif delta.seconds < 3600:
+        return f"{delta.seconds // 60} minutes ago"
+    else:
+        return f"{delta.seconds // 3600} hours ago"
 
+
+@csrf_exempt
+def list_devotions(request, user_id, format=None):
+    if request.method != 'GET':
+        return HttpResponseNotAllowed(['GET'])
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM bs_users WHERE _id = %s AND is_active = true ", [user_id])
+            valid_user_count = cursor.fetchone()[0]
+
+        if valid_user_count:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT _id FROM media_category_type WHERE type = 'devotion'")
+                media_category_type_id = cursor.fetchone()[0]
+
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT * FROM bs_media WHERE media_category_id = %s AND is_active = true ", [media_category_type_id])
+                media_info = cursor.fetchall()
+
+            if media_info:
+                response_data = []
+                for media_row in media_info:
+                    media_info_dict = {
+                        '_id': media_row[0],
+                        'media_type_id': media_row[1],
+                        'media_category_id': media_row[2],
+                        'storage_link': media_row[3],
+                        'media_name': media_row[4],
+                        'media_desc': media_row[5],
+                        'created_by': media_row[6],
+                        'created_at': format_time_since(media_row[7]),
+                        'updated_at': media_row[8],
+                        'is_active': media_row[9],
+                        'media_size': media_row[10]
+                    }
+
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM bs_comments WHERE media_id = %s AND is_active = true", [media_row[0]])
+                        total_comments = cursor.fetchone()[0]
+
+                    with connection.cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM bs_likes WHERE like_on_id = %s AND is_active = true", [media_row[0]])
+                        total_likes = cursor.fetchone()[0]
+
+                    response_data.append({
+                        'media_info': media_info_dict,
+                        'total_comments': total_comments,
+                        'total_likes': total_likes
+                    })
+
+                return JsonResponse(response_data, safe=False)
+            else:
+                return JsonResponse({'error': 'No media found for this user'}, status=404)
+        else:
+            return JsonResponse({'error': 'Invalid user ID'}, status=404)
+            
+    except Exception as e:
+        return HttpResponseServerError(str(e))
+
+def get_greeting():
+    now = datetime.now()
+    current_hour = now.hour
+
+    if current_hour < 12:
+        return "Good morning"
+    elif current_hour < 18:
+        return "Good afternoon"
+    elif current_hour < 22:
+        return "Good evening"
+    else:
+        return "Good night"
+
+@csrf_exempt
+def find_user_info(request, user_id, format=None):
+    if request.method != 'GET':
+        return HttpResponseNotAllowed(['GET'])
     
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM bs_users WHERE _id = %s AND is_active = true ", [user_id])
+            valid_user_count = cursor.fetchone()[0]
+
+        if valid_user_count:
+            with connection.cursor() as cursor:
+                cursor.execute("""SELECT username, first_name, last_name, phone_number
+                     FROM bs_users WHERE _id = %s AND is_active = true """, [user_id])
+                user_info = cursor.fetchone()
+            
+            if user_info:
+                media_info_dict = {
+                    'username': user_info[0],
+                    'first_name': user_info[1],
+                    'last_name': user_info[2],
+                    'phone_number': user_info[3],
+                    'greeting': get_greeting(),
+                }
+
+                return JsonResponse(media_info_dict, safe=False)
+            else:
+                return JsonResponse({'error': 'No media found for this user'}, status=404)
+        else:
+            return JsonResponse({'error': 'Invalid user ID'}, status=404)
+    except Exception as e:
+        return HttpResponseServerError(str(e))
+
+@csrf_exempt
+def find_user_info_list(request, username_prefix, format=None):
+    if request.method != 'GET':
+        return HttpResponseNotAllowed(['GET'])
+    
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""SELECT _id, username, first_name, last_name, phone_number,
+                is_superuser, last_login_at FROM bs_users WHERE username LIKE %s AND 
+                is_active = true """, [username_prefix + '%'])
+            users_info = cursor.fetchall()
+            
+        if users_info:
+            users_list = []
+            for user_info in users_info:
+                user = {
+                    '_id': user_info[0],
+                    'username': user_info[1],
+                    'first_name': user_info[2],
+                    'last_name': user_info[3],
+                    'phone_number': user_info[4],
+                    'is_superuser': user_info[5],
+                    'last_login_at': user_info[6],
+                }
+                users_list.append(user)
+
+            return JsonResponse(users_list, safe=False)
+        else:
+            return JsonResponse({'error': 'No users found for this prefix'}, status=404)
+    except Exception as e:
+        return HttpResponseServerError(str(e))
+

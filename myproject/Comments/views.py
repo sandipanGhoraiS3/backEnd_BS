@@ -4,12 +4,14 @@ import boto3
 from dotenv import load_dotenv
 import os
 from django.views.decorators.csrf import csrf_exempt
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseServerError, HttpResponseNotAllowed
 from rest_framework.decorators import api_view
 import tempfile
 from django.db import connection
 from rest_framework import status
 import requests
+from django.utils.timesince import timesince
+from datetime import datetime
 
 @csrf_exempt
 def add_comment(request, format=None):
@@ -213,8 +215,90 @@ def add_comment_like(request, format=None):
         return JsonResponse({'error': 'Invalid request method'}, status=405)
 
 
+def format_time_since(timestamp):
+    now = datetime.now()
+    delta = now - timestamp
+    if delta.days > 0:
+        return f"{delta.days} days ago"
+    elif delta.seconds < 60:
+        return f"{delta.seconds} seconds ago"
+    elif delta.seconds < 3600:
+        return f"{delta.seconds // 60} minutes ago"
+    else:
+        return f"{delta.seconds // 3600} hours ago"
 
 
-
+@csrf_exempt
+def list_comments(request, media_id, format=None):
+    if request.method != 'GET':
+        return HttpResponseNotAllowed(['GET'])
     
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM bs_media WHERE _id = %s AND is_active = true ", [media_id])
+            valid_media_count = cursor.fetchone()[0]
+
+        if valid_media_count:
+            with connection.cursor() as cursor:
+                cursor.execute("""SELECT _id, commenter, comment_text, type_of_comment, 
+                    media_id, created_at, is_react, react_at FROM bs_comments 
+                    WHERE media_id = %s AND is_active = true """, [media_id])
+                comment_info = cursor.fetchall()
+            
+            if comment_info:
+                comment_list = []
+                for comment in comment_info:
+                    comments = {
+                        '_id': comment[0],
+                        'commenter': comment[1],
+                        'comment_text': comment[2],
+                        'type_of_comment': comment[3],
+                        'media_id': comment[4],
+                        'created_at': format_time_since(comment[7]),
+                        'admin_react': comment[6],
+                    }
+                    comment_list.append(comments)
+
+                return JsonResponse(comment_list, safe=False)
+            else:
+                return JsonResponse({'error': 'No comments found for this media'}, status=404)
+        else:
+            return JsonResponse({'error': 'Invalid media ID'}, status=404)
+    except Exception as e:
+        return HttpResponseServerError(str(e))
+
+@csrf_exempt
+def list_likes(request, media_id, format=None):
+    if request.method != 'GET':
+        return HttpResponseNotAllowed(['GET'])
+    
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM bs_media WHERE _id = %s AND is_active = true ", [media_id])
+            valid_media_count = cursor.fetchone()[0]
+
+        if valid_media_count:
+            with connection.cursor() as cursor:
+                cursor.execute("""SELECT bl."_id" AS like_id, bu."_id" AS user_id, bu.username
+                    FROM bs_likes bl, bs_users bu
+                    WHERE bl.liked_by = bu."_id"
+                    AND bl.like_on_id = %s
+                    AND bl.is_active = true """, [media_id])
+                like_info = cursor.fetchall()
+            
+            if like_info:
+                like_list = []
+                for like in like_info:
+                    likes = {
+                        'like_id': like[0],
+                        'user_id': like[1],
+                        'username': like[2],
+                    }
+                    like_list.append(likes)
+
+            return JsonResponse(like_list, safe=False)
+        else:
+            return JsonResponse({'error': 'Invalid media ID'}, status=404)
+    except Exception as e:
+        return HttpResponseServerError(str(e))
 
