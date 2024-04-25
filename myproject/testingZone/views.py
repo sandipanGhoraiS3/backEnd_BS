@@ -1,7 +1,7 @@
 from django.shortcuts import render
 import boto3
 from dotenv import load_dotenv
-import os
+import os, io
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 from rest_framework.decorators import api_view
@@ -37,8 +37,9 @@ def upload_file(request, format=None):
     file_type = request.POST.get('type', '')
     print(file_type)
     # typeoffile = file_type.get('type')
+    # print(typeoffile)
     file_size = format_file_size(file_url.size)
-    print(file_url)
+    print(file_size)
 
     upload_path = file_type+"s"
     # upload_path = typeoffile
@@ -53,22 +54,20 @@ def upload_file(request, format=None):
                       aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
                       region_name=AWS_REGION_NAME)
 
-    s3_file_url = ""
+    # s3_file_url = ""
     try:
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
             for chunk in file_url.chunks():
                 temp_file.write(chunk)
 
-            temp_file_path = temp_file.name
-
         file_key = f"{upload_path}/{file_url.name}"
         print(f"FILE KEY: {file_key}")
-        s3.upload_file(temp_file_path, S3_BUCKET_NAME, file_key)
+        s3.upload_file(temp_file.name, S3_BUCKET_NAME, file_key)
 
         s3_file_url = f"s3://{S3_BUCKET_NAME}/{file_key}"
         print(f"File uploaded to S3: {s3_file_url}")
 
-        os.unlink(temp_file_path)
+        os.unlink(temp_file.name)
     except Exception as e:
         return JsonResponse({
             'error': f"Error uploading file from S3: {e}"

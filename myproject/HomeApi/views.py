@@ -47,7 +47,7 @@ def add_media(request, format=None):
                 cursor.execute("SELECT count(*) FROM bs_users WHERE _id = %s AND is_active = true ", [created_by])
                 count_user_id = cursor.fetchone()[0]
 
-                print(count_user_id)
+            print(count_user_id)
 
             if media_type_id and media_category_type_id and count_user_id > 0:
                 
@@ -62,6 +62,8 @@ def add_media(request, format=None):
                 if response.status_code == 200:
                     response_payload = response.json()
 
+                    # storage_link = response_payload["path"]
+
                     try:
                         with connection.cursor() as cursor:
                             cursor.execute("""
@@ -72,7 +74,59 @@ def add_media(request, format=None):
                                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                             """, [media_type_id, media_category_type_id, response_payload['path'], media_name, media_desc, response_payload['file_size'], created_by])
 
-                        return JsonResponse({'massage': f'{media_type} added successfuly'}, status=200)
+                        with connection.cursor() as cursor:
+                            cursor.execute("""
+                            SELECT _id FROM bs_media WHERE media_type_id = %s AND media_category_id = %s 
+                            AND storage_link = %s AND media_name = %s AND media_desc = %s AND media_size = %s AND created_by = %s ORDER BY created_at DESC LIMIT 1
+                            """, [media_type_id, media_category_type_id, response_payload['path'], media_name, media_desc, response_payload['file_size'], created_by])
+                            media_id = cursor.fetchone()[0]
+
+                        print(f"media _id : {media_id}")
+                        
+                        with connection.cursor() as cursor:
+                            cursor.execute("SELECT type FROM media_category_type WHERE _id = %s ", [media_category_type_id])
+                            media_category_type = cursor.fetchone()[0]
+
+                        print(f"media_category_type : {media_category_type}")
+
+                        notification_text = f'New {media_category_type} added from admin'
+
+                        with connection.cursor() as cursor:
+                            cursor.execute("""
+                                INSERT INTO bs_notifications 
+                                (activator_id, media_id, type_of_notification, notification_text) 
+                                VALUES (%s, %s, %s, %s)""", [created_by, media_id, 'admin post', notification_text])
+
+                        with connection.cursor() as cursor:
+                            cursor.execute("""
+                            SELECT _id FROM bs_notifications WHERE activator_id = %s AND
+                            media_id = %s AND type_of_notification = %s AND notification_text = %s 
+                            ORDER BY created_at DESC LIMIT 1 """, 
+                            [created_by, media_id, 'admin post', notification_text])
+                            notification_id = cursor.fetchone()[0]
+
+                        print(f"notification_id : {notification_id}")
+
+                        with connection.cursor() as cursor:
+                            cursor.execute("""
+                            SELECT _id FROM bs_users WHERE is_superuser <> true """)
+                            users = cursor.fetchall()
+
+                        print(users)
+
+                        if users:
+                            for user in users:
+                                with connection.cursor() as cursor:
+                                    cursor.execute("""
+                                    INSERT INTO bs_notification_users 
+                                    (notification_id, notifier) VALUES (%s, %s)""", [notification_id, user])
+
+                        return JsonResponse({
+                            'massage': f'{media_type} added successfuly',
+                            'media_id': media_id,
+                            'notification_id': notification_id,
+                            }, status=200)
+                    
                     except Exception as e:
                         return JsonResponse({'error': 'Failed to add media', 'details': str(e)}, status=500)
             else:
@@ -80,6 +134,8 @@ def add_media(request, format=None):
         except Exception as e:
             error_message = str(e)
             return JsonResponse({'error': error_message}, status=500)
+
+
 
 def format_time_since(timestamp):
     now = datetime.now()
