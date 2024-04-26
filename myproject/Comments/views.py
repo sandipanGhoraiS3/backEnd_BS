@@ -10,8 +10,9 @@ import tempfile
 from django.db import connection
 from rest_framework import status
 import requests
-from django.utils.timesince import timesince
-from datetime import datetime
+from . import utils
+
+
 
 @csrf_exempt
 def add_comment(request, format=None):
@@ -101,15 +102,16 @@ def add_like(request, format=None):
                 if likedForUser > 0: 
                     with connection.cursor() as cursor:
                         cursor.execute("""
-                        SELECT _id FROM bs_likes 
+                        SELECT _id, is_active FROM bs_likes 
                         WHERE like_on_id = %s AND liked_by = %s """, [like_on_id, liked_by]) 
-                        like_id = cursor.fetchone()[0]
+                        result = cursor.fetchone()
+                        if result:
+                            like_id, is_active = result
+                        else:
+                            return JsonResponse({'message': 'not find any record'}, status=405)
 
                     print(f"like_id: {like_id}")
-
-                    with connection.cursor() as cursor:
-                        cursor.execute("SELECT is_active FROM bs_likes WHERE like_on_id = %s AND liked_by = %s", [like_on_id, liked_by])
-                        is_active = cursor.fetchone()[0]
+                    print(f"is_active: {is_active}")
 
                     if is_active: 
                         with connection.cursor() as cursor:
@@ -118,29 +120,36 @@ def add_like(request, format=None):
                                 SET is_active = false, updated_at = Now()
                                 WHERE like_on_id = %s AND liked_by = %s""", [like_on_id, liked_by])
                             
-                        return JsonResponse({'message': 'Like updated successfully'}, status=200)
                     else:
                         with connection.cursor() as cursor:
                             cursor.execute("""
                                 UPDATE bs_likes 
                                 SET is_active = true, updated_at = Now()
                                 WHERE like_on_id = %s AND liked_by = %s""", [like_on_id, liked_by])
-                        
+
                     with connection.cursor() as cursor:
                         cursor.execute("""
                         INSERT INTO bs_notification_admin  
-                        (like_id, notification_type) VALUES (%s, %s)""", [like_id, 'added like'])
+                        (like_id, notification_type) VALUES (%s, %s)""", [like_id, 'update like'])
 
-                        
-                    return JsonResponse({'message': 'Like updated successfully'}, status=200)
+                    with connection.cursor() as cursor:
+                        cursor.execute("""
+                        SELECT _id FROM bs_notification_admin  
+                        WHERE like_id = %s AND notification_type = %s ORDER BY created_at DESC LIMIT 1 """, 
+                        [like_id, 'update like'])
+                        notification_id = cursor.fetchone()[0]
+
+                    return JsonResponse({
+                        'message': 'like updated successfully',
+                        'like_id': like_id,
+                        'notification_id': notification_id,
+                        }, status=200)
 
                 else:
                     with connection.cursor() as cursor:
                         cursor.execute("""
                         INSERT INTO bs_likes  
                         (like_on_id, liked_by) VALUES (%s, %s)""", [like_on_id, liked_by])
-
-                    
 
                     with connection.cursor() as cursor:
                         cursor.execute("""
@@ -149,18 +158,26 @@ def add_like(request, format=None):
                         like_id = cursor.fetchone()[0]
 
                     print(f"like_id: {like_id}")
-                    
-                    
+
                     with connection.cursor() as cursor:
                         cursor.execute("""
                         INSERT INTO bs_notification_admin  
                         (like_id, notification_type) VALUES (%s, %s)""", [like_id, 'added like'])
 
+                    print('all good')
+
+                    with connection.cursor() as cursor:
+                        cursor.execute("""
+                        SELECT _id FROM bs_notification_admin  
+                        WHERE like_id = %s AND notification_type = %s ORDER BY created_at DESC LIMIT 1 """, 
+                        [like_id, 'added like'])
+                        notification_id = cursor.fetchone()[0]
+                    
                     return JsonResponse({
                         'message': 'Like inserted successfully',
                         'like_id': like_id,
+                        'notification_id': notification_id,
                         }, status=200)
-                
             else:
                 return JsonResponse({'error': 'Invalid liked_by id or media id'}, status=400)
 
@@ -170,107 +187,6 @@ def add_like(request, format=None):
     else:
         return JsonResponse({'error': 'Invalid request method'}, status=405)
     
-@csrf_exempt
-def add_comment_like(request, format=None):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            like_on_id = data.get('like_on_id')
-            liked_by = data.get('liked_by')
-            media_on = data.get('media_on')
-
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON payload'}, status=400)
-        
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT count(*) FROM bs_comments WHERE _id = %s ", [like_on_id])
-                likeOnValid = cursor.fetchone()[0]
-
-            with connection.cursor() as cursor:
-                cursor.execute("""SELECT count(*) FROM bs_users 
-                    WHERE _id = %s AND is_superuser = true AND is_active = true """, [liked_by])
-                likedByValid = cursor.fetchone()[0]
-
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT count(*) FROM bs_media WHERE _id = %s ", [media_on])
-                mediaValid = cursor.fetchone()[0]
-
-            if likeOnValid and likedByValid and mediaValid:
-                with connection.cursor() as cursor:
-                    cursor.execute("""SELECT count(*) FROM likes_on_comments 
-                        WHERE like_on_id = %s and liked_by = %s and media_on = %s """, [like_on_id, liked_by, media_on])
-                    hasData = cursor.fetchone()[0]
-
-                if hasData > 0:
-                    with connection.cursor() as cursor:
-                        cursor.execute("""SELECT is_active FROM likes_on_comments 
-                        WHERE like_on_id = %s AND liked_by = %s AND media_on = %s """, [like_on_id, liked_by, media_on])
-                    row = cursor.fetchone()
-
-                    if row:
-                        is_active = row[0]
-                        if is_active:     
-                            with connection.cursor() as cursor: 
-                                cursor.execute("""
-                                    UPDATE bs_comments 
-                                    SET is_react = false, react_updated_at = Now() 
-                                    WHERE _id = %s""", [like_on_id])
-                                
-                            with connection.cursor() as cursor:
-                                cursor.execute("""
-                                INSERT INTO bs_notifications (activetor_id, comment_id, type_of_notification, notification_text) 
-                                VALUES (%s, %s, %s, %s)""", [like_on_id, liked_by, media_on])
-
-                            return JsonResponse({'message': 'Like updated successfully'}, status=200)
-                        else:
-                            with connection.cursor() as cursor: 
-                                cursor.execute("""
-                                    UPDATE bs_comments 
-                                    SET is_react = true, react_updated_at = Now() 
-                                    WHERE _id = %s""", [like_on_id])
-                                
-                            return JsonResponse({'message': 'Like updated successfully'}, status=200)
-                    
-                    else:
-                        return JsonResponse({'error': 'Invalid like_by id or media id, comment id'}, status=400)
-                    
-                else:
-                    with connection.cursor() as cursor:
-                        cursor.execute("""
-                            INSERT INTO likes_on_comments 
-                            (like_on_id, liked_by, media_on) VALUES (%s, %s, %s)""", [like_on_id, liked_by, media_on])
-                        
-                    with connection.cursor() as cursor:
-                        cursor.execute("""
-                            UPDATE bs_comments 
-                            SET is_react = true, react_at = Now() 
-                            WHERE _id = %s""", [like_on_id])
-                    
-                    return JsonResponse({'message': 'Like added successfully'}, status=200)
-                
-            else:
-                return JsonResponse({'error': 'ids are not valid'}, status=405)
-                
-        except Exception as e:
-            error_message = str(e)
-            return JsonResponse({'error': error_message}, status=500)
-    else:
-        return JsonResponse({'error': 'Invalid request method'}, status=405)
-
-
-def format_time_since(timestamp):
-    now = datetime.now()
-    delta = now - timestamp
-    if delta.days > 0:
-        return f"{delta.days} days ago"
-    elif delta.seconds < 60:
-        return f"{delta.seconds} seconds ago"
-    elif delta.seconds < 3600:
-        return f"{delta.seconds // 60} minutes ago"
-    else:
-        return f"{delta.seconds // 3600} hours ago"
-
 
 @csrf_exempt
 def list_comments(request, media_id, format=None):
@@ -281,6 +197,8 @@ def list_comments(request, media_id, format=None):
         with connection.cursor() as cursor:
             cursor.execute("SELECT COUNT(*) FROM bs_media WHERE _id = %s AND is_active = true ", [media_id])
             valid_media_count = cursor.fetchone()[0]
+
+        print(valid_media_count)
 
         if valid_media_count:
             with connection.cursor() as cursor:
@@ -298,7 +216,7 @@ def list_comments(request, media_id, format=None):
                         'comment_text': comment[2],
                         'type_of_comment': comment[3],
                         'media_id': comment[4],
-                        'created_at': format_time_since(comment[7]),
+                        'created_at': utils.format_time_since(comment[7]),
                         'admin_react': comment[6],
                     }
                     comment_list.append(comments)
@@ -330,8 +248,9 @@ def list_likes(request, media_id, format=None):
                     AND bl.is_active = true """, [media_id])
                 like_info = cursor.fetchall()
             
+            like_list = []  # Define like_list outside the if block
+
             if like_info:
-                like_list = []
                 for like in like_info:
                     likes = {
                         'like_id': like[0],
@@ -346,50 +265,6 @@ def list_likes(request, media_id, format=None):
     except Exception as e:
         return HttpResponseServerError(str(e))
 
-@csrf_exempt
-def add_notification_admin_post(request, format=None):
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            activator = data.get('activator')
-            purpose = data.get('purpose')
-            purpose_id = data.get('purpose_id')
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON payload'}, status=400)
-        
-        try:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT COUNT(*) FROM bs_users WHERE _id = %s AND is_active = true", [activator])
-                validUser = cursor.fetchone()[0]
-
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT COUNT(*) FROM media_category_type WHERE _id = %s", [purpose])
-                validPurpose = cursor.fetchone()[0]
-
-            if validUser and validPurpose:
-                with connection.cursor() as cursor:
-                    cursor.execute("INSERT INTO bs_notifications (activator, purpose, purpose_id) VALUES (%s, %s, %s)", [activator, purpose, purpose_id])
-
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT _id FROM bs_notifications WHERE activator = %s AND purpose = %s AND purpose_id = %s AND is_active = true", [activator, purpose, purpose_id])
-                    notification_id = cursor.fetchone()[0]
-
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT _id FROM bs_users WHERE _id <> %s AND is_active = true", [activator])
-                    all_users = cursor.fetchall()
-
-                if all_users:
-                    for user in all_users:
-                        with connection.cursor() as cursor:
-                            cursor.execute("INSERT INTO bs_notification_users (notification_id, notifier) VALUES (%s, %s)", [notification_id, user[0]])
-
-                return JsonResponse({'notification_added': True}, status=200)
-
-        except Exception as e:
-            return JsonResponse({'error': str(e)}, status=500)
-
-    else:
-        return HttpResponseNotAllowed(['POST'])
 
 @csrf_exempt
 def add_admin_like(request, format=None):
@@ -399,79 +274,113 @@ def add_admin_like(request, format=None):
             comment_id = data.get('comment_id')
             react_by = data.get('react_by')
 
-        except json.JSONDecodeError:
-            return JsonResponse({'error': 'Invalid JSON payload'}, status=400)
+            if not comment_id or not react_by:
+                return JsonResponse({'error': 'Missing comment_id or react_by'}, status=400)
         
-        try:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT COUNT(*) FROM bs_comments WHERE _id = %s AND is_active = true", [comment_id])
-                validCommnt_id = cursor.fetchone()[0]
+                validComment_id = cursor.fetchone()[0]
+
+            print(f"validComment_id: {validComment_id}")
 
             with connection.cursor() as cursor:
                 cursor.execute("""SELECT COUNT(*) FROM bs_users 
-                WHERE _id = %s AND is_active = true AND is_superuser = true""", [comment_id])
-                validUser_id = cursor.fetchone()[0]
+                WHERE _id = %s AND is_active = true AND is_superuser = true""", [react_by])
+                validAdmin_id = cursor.fetchone()[0]
 
-            if validCommnt_id and validUser_id:
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT is_react FROM bs_comments WHERE _id = %s AND is_active = true", [comment_id])
-                    is_react = cursor.fetchone()[0]
+            with connection.cursor() as cursor:
+                cursor.execute("""SELECT commenter FROM bs_comments 
+                WHERE _id = %s AND is_active = true""", [comment_id])
+                commenter_id = cursor.fetchone()[0]
+
+            print(f"validAdmin_id: {validAdmin_id}")
+
+            if validComment_id and validAdmin_id:
+                print("all present")
 
                 with connection.cursor() as cursor:
                     cursor.execute("""SELECT EXISTS (SELECT 1 FROM bs_comments 
-                    WHERE _id = %s AND is_active = true AND react_updated_at IS NOT NULL
-                    ) AS exists_updated_at;""", [comment_id])
-                    react_update = cursor.fetchone()[0]
+                    WHERE _id = %s AND is_active = true AND react_at IS NOT NULL
+                    ) AS exists_react_at""", [comment_id])
+                    is_react_at = cursor.fetchone()[0]
 
-                with connection.cursor() as cursor:
-                    cursor.execute("SELECT commenter FROM bs_comments WHERE _id = %s AND is_active = true", [comment_id])
-                    commenter_id = cursor.fetchone()[0]
+                print(is_react_at)
 
-                if is_react == False and react_update == False:
+                if is_react_at:
+
+                    print("react_at present")
+
                     with connection.cursor() as cursor:
-                        cursor.execute(""" UPDATE bs_comments SET is_react = true, react_by = %s 
-                        WHERE _id = %s """, [react_by, comment_id])
+                        cursor.execute("""SELECT is_react FROM bs_comments 
+                        WHERE _id = %s AND is_active = true""", [comment_id])
+                        is_react = cursor.fetchone()[0]
 
-                if is_react == False and react_update == True:
+                    if is_react:
+                        with connection.cursor() as cursor:
+                            cursor.execute(""" UPDATE bs_comments SET is_react = false, react_by = %s, react_updated_at = Now()
+                            WHERE _id = %s """, [react_by, comment_id])
+                    else:
+                        with connection.cursor() as cursor:
+                            cursor.execute(""" UPDATE bs_comments SET is_react = true, react_by = %s, react_updated_at = Now()
+                            WHERE _id = %s """, [react_by, comment_id])
+
+
                     with connection.cursor() as cursor:
-                        cursor.execute(""" UPDATE bs_comments SET is_react = true, react_by = %s, updated_at = Now()
-                        WHERE _id = %s """, [react_by, comment_id])
+                        cursor.execute("""INSERT INTO bs_notifications 
+                        (activator_id, comment_id, type_of_notification, notification_text) VALUES (%s, %s, %s, %s)""", [react_by, comment_id, 'update react by admin', 'react updated by admin'])
 
-                if is_react:
-                    with connection.cursor() as cursor:
-                        cursor.execute(""" UPDATE bs_comments SET is_react = false, react_by = %s, updated_at = Now()
-                        WHERE _id = %s """, [react_by, comment_id])
-
-                
-
-                with connection.cursor() as cursor:
-                    cursor.execute("""INSERT INTO bs_notifications 
-                    (activetor_id, comment_id, type_of_notification, notification_text) VALUES (%s, %s, %s, %s)""", [react_by, comment_id, 'admin react', 'react updated'])
-
-                if is_react == False and react_update == False:
-                    with connection.cursor() as cursor:
-                        cursor.execute("""SELECT _id FROM bs_notifications 
-                        WHERE activetor_id = %s AND comment_id = %s AND type_of_notification = %s AND notification_text = %s 
-                         ORDER BY created_at DESC LIMIT 1""", [react_by, comment_id, 'admin react', 'new react given'])
-                        last_notification_id = cursor.fetchone()[0]
-                else:
                     with connection.cursor() as cursor:
                         cursor.execute("""SELECT _id FROM bs_notifications 
-                        WHERE activetor_id = %s AND comment_id = %s AND type_of_notification = %s AND notification_text = %s 
-                         ORDER BY created_at DESC LIMIT 1""", [react_by, comment_id, 'admin react', 'react updated'])
-                        last_notification_id = cursor.fetchone()[0]
+                        WHERE activator_id = %s AND comment_id = %s AND type_of_notification = %s 
+                        AND notification_text = %s ORDER BY created_at DESC LIMIT 1 """, [react_by, comment_id, 'update react by admin', 'react updated by admin'])
+                        notification_id = cursor.fetchone()[0]
+
+                    with connection.cursor() as cursor:
+                        cursor.execute("""INSERT INTO bs_notification_users 
+                        (notification_id, notifier) VALUES (%s, %s)""", [notification_id, commenter_id])
+
+                    return JsonResponse({
+                        'message': 'like updated',
+                        'notification_id': notification_id,
+                        'commenter': comment_id,
+                    }, status=200)
                     
-                with connection.cursor() as cursor:
-                    cursor.execute("""INSERT INTO bs_notification_users 
-                    (notification_id, notifier) VALUES (%s, %s)""", [last_notification_id, commenter_id])
+                else:
+                    print("react_at not present")
 
+                    with connection.cursor() as cursor:
+                        cursor.execute(""" UPDATE bs_comments SET is_react = true, react_by = %s, react_at = Now()
+                        WHERE _id = %s """, [react_by, comment_id]) 
+                    
+                    with connection.cursor() as cursor:
+                        cursor.execute("""INSERT INTO bs_notifications 
+                        (activator_id, comment_id, type_of_notification, notification_text) VALUES (%s, %s, %s, %s)""", [react_by, comment_id, 'new admin react', 'New react added from admin'])
+
+                    with connection.cursor() as cursor:
+                        cursor.execute("""SELECT _id FROM bs_notifications 
+                        WHERE activator_id = %s AND comment_id = %s AND type_of_notification = %s 
+                        AND notification_text = %s ORDER BY created_at DESC LIMIT 1 """, [react_by, comment_id, 'new admin react', 'New react added from admin'])
+                        notification_id = cursor.fetchone()[0]
+
+                    with connection.cursor() as cursor:
+                        cursor.execute("""INSERT INTO bs_notification_users 
+                        (notification_id, notifier) VALUES (%s, %s)""", [notification_id, commenter_id])
+
+                    return JsonResponse({
+                        'message': 'new like added',
+                        'notification_id': notification_id,
+                        'commenter': commenter_id,
+                    }, status=200)
             else:
                 return JsonResponse({'error': 'Invalid comment ID or react by ID'}, status=404)
             
-            return JsonResponse({'message': 'like given'}, status=200)
+        except json.JSONDecodeError:
+            return JsonResponse({'error': 'Invalid JSON payload'}, status=400)
+        
         except Exception as e:
             return JsonResponse({'error': str(e)}, status=500)
 
     else:
         return HttpResponseNotAllowed(['PUT'])
+
 
