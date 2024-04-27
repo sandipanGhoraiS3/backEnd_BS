@@ -383,4 +383,187 @@ def add_admin_like(request, format=None):
     else:
         return HttpResponseNotAllowed(['PUT'])
 
+@csrf_exempt
+def list_notification_users(request, user_id, format=None):
+    if request.method != 'GET':
+        return HttpResponseNotAllowed(['GET'])
+    
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT count(*) 
+                FROM bs_users  
+                WHERE _id = %s AND is_active = true
+            """, [user_id])
+            is_user = cursor.fetchone()[0]
 
+        if is_user:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT notification_id, notifier, created_at, updated_at, is_new 
+                    FROM bs_notification_users  
+                    WHERE notifier = %s AND is_active = true ORDER BY created_at DESC
+                """, [user_id])
+                notifications = cursor.fetchall()
+
+                notification_list = []
+                for notification in notifications:
+                    notify = {
+                        'notification_id': notification[0],
+                        'notifier': notification[1],
+                        'created_at': utils.format_time_since(notification[2]),
+                        'updated_at': notification[3],
+                        'is_new': notification[4]
+                    }
+                    notification_list.append(notify)
+
+            return JsonResponse(notification_list, safe=False, status=200)
+        
+        else:
+            return JsonResponse({'error': 'user not found'}, status=500)
+        
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@csrf_exempt
+def list_notification_admin(request, admin_id, format=None):
+    if request.method != 'GET':
+        return HttpResponseNotAllowed(['GET'])
+    
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT count(*) FROM bs_users WHERE _id = %s AND is_active = true AND is_superuser = true 
+            """, [admin_id])
+            is_admin = cursor.fetchone()[0]
+
+            if is_admin:
+                with connection.cursor() as cursor:
+                    cursor.execute("""
+                        select * from bs_notification_admin bna 
+                        where bna.activator_id = %s and is_active = true order by created_at desc
+                    """, [admin_id])
+                    notifications = cursor.fetchall()
+                
+                notification_list = []
+                for notification in notifications:
+                    notify = {
+                        '_id': notification[0],
+                        'comment_id': notification[1],
+                        'like_id': notification[2],
+                        'created_at': utils.format_time_since(notification[3]),
+                        'updated_at': notification[4],
+                        'is_new': notification[5],
+                        'is_active': notification[6],
+                        'notification_type': notification[7],
+                        'activator_id': notification[8]
+                    }
+                    notification_list.append(notify)
+
+                return JsonResponse(notification_list, safe=False, status=200)
+            else:
+                return JsonResponse({'error': 'admin not found'}, status=500)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+    
+
+@csrf_exempt
+def admin_notification_info(request, notification_id, format=None):
+    if request.method != 'GET':
+        return HttpResponseNotAllowed(['GET'])
+    
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT count(*) FROM bs_notification_admin WHERE _id = %s AND is_active = true 
+            """, [notification_id])
+            is_notification = cursor.fetchone()[0]
+
+        if is_notification:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT 
+                        EXISTS (SELECT 1 FROM information_schema.columns 
+                                WHERE table_name = 'bs_notification_admin' AND column_name = 'comment_id') AS comment_id_exists,
+                        EXISTS (SELECT 1 FROM information_schema.columns 
+                                WHERE table_name = 'bs_notification_admin' AND column_name = 'like_id') AS like_id_exists;
+                """)
+                row = cursor.fetchone()
+                comment_id_exists = row[0]
+                like_id_exists = row[1]
+
+            notification_details = {}
+            
+            with connection.cursor() as cursor:
+                    cursor.execute("""
+                        select * from bs_notification_admin bna 
+                        where _id = %s and is_active = true 
+                    """, [notification_id])
+                    notification = cursor.fetchall()
+
+            if comment_id_exists:
+
+                comment_id = notification[1],
+
+                notify = {
+                '_id': notification[0],
+                'comment_id': notification[1],
+                'created_at': utils.format_time_since(notification[3]),
+                'updated_at': notification[4],
+                'is_new': notification[5],
+                'is_active': notification[6],
+                'notification_type': notification[7],
+                'activator_id': notification[8]
+                }
+                notification_details['notification_info'] = notify
+
+                with connection.cursor() as cursor:
+                    cursor.execute("""
+                    select commenter , comment_text , type_of_comment , media_id , 
+                    created_at , updated_at , is_react , react_by , react_at , 
+                    react_updated_at , react_by from bs_comments bc 
+                    where _id = 3 and is_active = true
+                    """, [comment_id])
+                    comment = cursor.fetchall()
+
+                commenter = comment[0]
+                media_id = comment[3]
+
+                comment_info = {
+                    'commenter': comment[0],
+                    'comment_text': comment[1],
+                    'type_of_comment': comment[2],
+                    'media_id' : comment[3],
+                    'created_at': comment[4],
+                    'updated_at': comment[5],
+                    'is_react': comment[6],
+                    'react_by': comment[7],
+                    'react_at' : comment[8],
+                    'react_updated_at': comment[9],
+                    'react_by': comment[10],
+                }
+
+                notification_details['comment_info'] = comment_info
+
+                ## find media details and add to notification detils
+                with connection.cursor() as cursor:
+                    cursor.execute("""
+                    select commenter , comment_text , type_of_comment , media_id , 
+                    created_at , updated_at , is_react , react_by , react_at , 
+                    react_updated_at , react_by from bs_comments bc 
+                    where _id = 3 and is_active = true
+                    """, [comment_id])
+                    comment = cursor.fetchall()
+
+                ## also add commentor info details
+
+
+                
+
+
+        else:
+            return JsonResponse({'error': 'notification not found'}, status=500)
+
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
